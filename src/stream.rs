@@ -293,3 +293,132 @@ impl<'a, T: Clone + 'a, const N: usize> From<[T; N]>
 //         Self::from_iter(Default::default(), Box::new(s.iter().cloned()))
 //     }
 // }
+
+#[cfg(feature = "logos")]
+mod logos_ext {
+    use super::*;
+    use logos::{Lexer, Logos};
+    pub(super) fn from_logos<'a, T1, T2, S, F>(
+        mut lex: Lexer<'a, T1>,
+        mut convert: F,
+        eoi: S,
+    ) -> Stream<'a, T2, S, impl Iterator<Item = (T2, S)> + 'a>
+    where
+        F: (FnMut(T1, &mut Lexer<T1>) -> (T2, S)) + 'a,
+        T1: Logos<'a> + 'static,
+        S: Span,
+    {
+        let iter = core::iter::from_fn(move || {
+            let token = lex.next()?;
+            Some(convert(token, &mut lex))
+        });
+        Stream::from_iter(eoi, iter)
+    }
+
+    #[cfg(test)]
+    mod test {
+        use error::Simple;
+
+        use super::*;
+
+        #[derive(Logos, Debug, PartialEq, Eq, Hash, Clone)]
+        enum Token {
+            #[token("foo")]
+            Foo,
+            #[token("bar")]
+            Bar,
+            #[regex(r"\w+", |x| x.slice().to_string())]
+            Other(String),
+            #[error]
+            #[regex(r"\s+", logos::skip)]
+            Error,
+        }
+
+        fn test_case() -> Lexer<'static, Token> {
+            Token::lexer("foo bar baz")
+        }
+
+        #[test]
+        fn logos_output_is_correct() {
+            let lex = test_case();
+
+            assert_eq!(
+                lex.collect::<Vec<_>>(),
+                vec![Token::Foo, Token::Bar, Token::Other("baz".to_string())]
+            );
+        }
+
+        fn parser() -> impl Parser<Token, (), Error = Simple<Token>> {
+            just(Token::Foo)
+                .ignore_then(just(Token::Bar))
+                .ignore_then(just(Token::Other("baz".to_string())))
+                .ignore_then(end())
+        }
+
+        #[test]
+        fn simple_parse() {
+            let lex = test_case();
+            let len = lex.source().chars().count();
+            let stream = from_logos(lex, |t, lex| (t, lex.span()), len..len + 1);
+
+            assert_eq!(parser().parse(stream), Ok(()));
+        }
+    }
+}
+
+#[cfg(feature = "logos")]
+/// Constructs a stream from a Logos instance. Supports conversion to another token type
+/// for cases where the lexer does not capture string data.
+///
+/// You must pass in a span representing end of input. The example shows how to construct this
+/// in simple cases.
+///
+/// # Example
+///
+/// ```
+/// use chumsky::prelude::*;
+/// use chumsky::stream::from_logos;
+/// use logos::Logos;
+///
+/// #[derive(Logos, Debug, PartialEq, Eq, Hash, Clone)]
+/// enum Token {
+///     #[token("foo")]
+///     Foo,
+///     #[token("bar")]
+///     Bar,
+///     #[regex(r"\w+", |x| x.slice().to_string())]
+///     Other(String),
+///     #[error]
+///     #[regex(r"\s+", logos::skip)]
+///     Error,
+/// }
+///
+/// fn parser() -> impl Parser<Token, (), Error = Simple<Token>> {
+///     just(Token::Foo)
+///         .ignore_then(just(Token::Bar))
+///         .ignore_then(just(Token::Other("baz".to_string())))
+///         .ignore_then(end())
+/// }
+///
+/// fn simple_parse(source: &str) -> Result<(), Vec<Simple<Token>>> {
+///     let lex = Token::lexer(source);
+///     let len = lex.source().chars().count();
+///     let stream = from_logos(lex, |t, lex| (t, lex.span()), len..len + 1);
+///     parser().parse(stream)
+/// }
+///
+/// assert_eq!(simple_parse("foo bar baz"), Ok(()));
+/// ```
+pub fn from_logos<'a, T1, T2, S, F>(
+    lex: logos::Lexer<'a, T1>,
+    convert: F,
+    eoi: S,
+) -> Stream<'a, T2, S, impl Iterator<Item = (T2, S)> + 'a>
+where
+    F: (FnMut(T1, &mut logos::Lexer<T1>) -> (T2, S)) + 'a,
+    T1: logos::Logos<'a> + 'static,
+    S: Span + 'static,
+    T2: 'static,
+{
+    logos_ext::from_logos(lex, convert, eoi)
+}

@@ -22,6 +22,10 @@ nightly = []
 # Use `ahash` for maintaining sets of expected inputs
 ahash = { version = "^0.3", optional = true }
 
+# Support conversion from Logos to Stream
+# We allow all versions so cargo will pick the one the user is using
+logos = { version = "*", optional = true}
+
 [dev-dependencies]
 ariadne = "0.1.2"
 pom = "3.0"
